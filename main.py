@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query
 import duckdb
 from datetime import datetime
+from typing import Optional
 
 DB_PATH = '/home/chedda/health_pipeline/health_data.db'
 
@@ -50,6 +51,29 @@ async def receive_health_data(request: Request):
     con.executemany('INSERT OR IGNORE INTO health_metrics VALUES (?, ?, ?, ?, ?)', rows)
     con.close()
     return {"status": "success", "received_at": inserted_at, "rows_inserted": len(rows)}
+
+@app.get("/health/trends/{metric}")
+async def get_trends(
+    metric: str,
+    period: Optional[str] = Query(default="day", description="Grouping period: day, week, month")
+):
+    if period == "month":
+        trunc = "LEFT(date, 7)"
+    elif period == "week":
+        trunc = "date_trunc('week', CAST(LEFT(date, 10) AS DATE))"
+    else:
+        trunc = "LEFT(date, 10)"
+
+    con = get_con()
+    results = con.execute(f'''
+        SELECT {trunc} as period, AVG(value) as avg_value, unit
+        FROM health_metrics
+        WHERE metric = ?
+        GROUP BY period, unit
+        ORDER BY period
+    ''', [metric]).fetchall()
+    con.close()
+    return {"metric": metric, "period": period, "trends": results}
 
 @app.get("/health/summary")
 async def get_summary():
