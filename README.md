@@ -20,7 +20,8 @@ A personal health data pipeline that ingests Apple Watch / iPhone exports and se
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/health` | Ingest Apple Health export payload |
-| `GET` | `/health/summary` | Return average value per metric |
+| `GET` | `/health/summary` | Return average value per metric across all time |
+| `GET` | `/health/trends/{metric}?period=day\|week\|month` | Return time-series averages for a metric |
 
 ## Running Locally
 
