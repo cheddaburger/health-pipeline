@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Health pipeline — personal data
+health_data.db
+*.wal
