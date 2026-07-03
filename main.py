@@ -2,10 +2,36 @@ from fastapi import FastAPI, Request, Query
 import duckdb
 from datetime import datetime
 from typing import Optional
+import os
+import boto3
+from botocore.exceptions import ClientError
 
-DB_PATH = '/home/chedda/health_pipeline/health_data.db'
+DB_PATH = os.getenv('DB_PATH', '/app/health_data.db')
+S3_BUCKET = os.getenv('S3_BUCKET', '')
+S3_KEY = 'health_data.db'
 
 app = FastAPI()
+
+def s3_client():
+    return boto3.client('s3')
+
+def pull_db_from_s3():
+    if not S3_BUCKET:
+        return
+    try:
+        s3_client().download_file(S3_BUCKET, S3_KEY, DB_PATH)
+    except ClientError as e:
+        if e.response['Error']['Code'] != '404':
+            raise
+
+def push_db_to_s3():
+    if not S3_BUCKET:
+        return
+    s3_client().upload_file(DB_PATH, S3_BUCKET, S3_KEY)
+
+@app.on_event("startup")
+def startup():
+    pull_db_from_s3()
 
 def get_con():
     con = duckdb.connect(DB_PATH)
@@ -50,6 +76,7 @@ async def receive_health_data(request: Request):
     con = get_con()
     con.executemany('INSERT OR IGNORE INTO health_metrics VALUES (?, ?, ?, ?, ?)', rows)
     con.close()
+    push_db_to_s3()
     return {"status": "success", "received_at": inserted_at, "rows_inserted": len(rows)}
 
 @app.get("/health/trends/{metric}")

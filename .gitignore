@@ -220,3 +220,15 @@ __marimo__/
 # Health pipeline — personal data
 health_data.db
 *.wal
+
+# Terraform
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/terraform.tfvars
+terraform/.terraform.lock.hcl
+
+# Private planning docs
+AWS_Deployment_Build_Guide.md
+PORTFOLIO_UPDATE.md
+ARCHITECTURE.txt
