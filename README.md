@@ -1,31 +1,42 @@
 # Health Pipeline
 
-A personal health data pipeline that ingests Apple Watch / iPhone exports and serves aggregated metrics via a REST API.
+A personal health data pipeline that ingests Apple Watch / iPhone exports, stores them in an analytical database, and serves aggregated metrics and trends via a REST API. Containerized with Docker and deployed to AWS.
 
 ## Stack
 
-- **FastAPI** — REST API layer
+- **Python / FastAPI** — REST API layer
 - **DuckDB** — embedded analytical database
-- **Uvicorn** — ASGI server
+- **Docker** — containerization
+- **AWS EC2** — cloud compute
+- **AWS S3** — durable storage for the database file
+- **AWS Lambda** — serverless summary endpoint
+- **Terraform** — infrastructure as code
 
-## How It Works
+## Architecture
 
-1. Apple Health exports biometric data as JSON via the [Health Auto Export](https://www.healthexportapp.com/) app
-2. Data is sent to the `/health` endpoint via HTTP POST
-3. Metrics are batch-inserted into a local DuckDB database
-4. The `/health/summary` and `/health/trends` endpoints serve aggregated results
+The app runs as a Docker container on EC2. The DuckDB database file is persisted to S3 — on startup the container pulls it down, and after every write it pushes the updated file back up. This separates compute from storage: the server is disposable, the data survives.
 
-## Prerequisites
+A second deployment of the summary endpoint runs as an AWS Lambda function, demonstrating the tradeoff between always-on (EC2) and on-demand serverless (Lambda) execution models.
 
-```bash
-pip install fastapi uvicorn duckdb
-```
+All infrastructure — EC2 instance, S3 bucket, IAM roles, and security groups — is defined as code in `terraform/main.tf`.
 
 ## Running Locally
 
 ```bash
-cd health_pipeline
+pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8080
+```
+
+## Running with Docker
+
+```bash
+docker build -t health-pipeline .
+docker run -p 8080:8080 health-pipeline
+```
+
+To run with S3 persistence:
+```bash
+docker run -p 8080:8080 -e S3_BUCKET=your-bucket-name health-pipeline
 ```
 
 ## Endpoints
@@ -33,8 +44,8 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/health` | Ingest Apple Health export payload |
-| `GET` | `/health/summary` | Return average value per metric across all time |
-| `GET` | `/health/trends/{metric}?period=day\|week\|month` | Return time-series averages for a metric |
+| `GET` | `/health/summary` | Average value per metric across all time |
+| `GET` | `/health/trends/{metric}?period=day\|week\|month` | Time-series averages for a metric |
 
 ## Sample Responses
 
@@ -65,25 +76,35 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 }
 ```
 
+## Terraform
+
+Infrastructure is defined in `terraform/main.tf`. Copy the example vars file and fill in your values before running:
+
+```bash
+cd terraform
+cp terraform.tfvars.example terraform.tfvars
+# edit terraform.tfvars with your IP and AWS account ID
+terraform init
+terraform plan
+terraform apply
+```
+
 ## Data
 
-Metrics include heart rate, resting heart rate, HRV, sleep analysis, VO2 max, active energy, steps, blood oxygen, respiratory rate, nutrition, and 40+ more — all sourced from Apple Watch and iPhone sensors across a full year of data.
+Handles 55 metric types across a full year of Apple Watch and iPhone data — heart rate, HRV, sleep, VO2 max, steps, blood oxygen, respiratory rate, nutrition, and more.
 
 The database file (`health_data.db`) is excluded from version control as it contains personal health data.
 
 ## Key Challenges
 
 **Field name inconsistency across Apple Health metrics**
-Apple Health exports use different field names depending on the metric type — most use `qty`, but heart rate exports use `Avg`/`Min`/`Max`, and sleep analysis uses `totalSleep`. The pipeline handles this with a fallback chain at parse time.
+Apple Health exports use different field names depending on the metric type — most use `qty`, but heart rate exports use `Avg` and sleep analysis uses `totalSleep`. The pipeline handles this with a priority fallback chain at parse time.
 
-**DuckDB concurrency with async requests**
-A single shared DuckDB connection caused lock contention under concurrent async requests, resulting in hanging responses. Fixed by opening a fresh connection per request and closing it immediately after use.
+**DuckDB concurrency under async requests**
+A shared DuckDB connection caused lock contention under concurrent async requests. Fixed by opening a fresh connection per request and closing it immediately after use.
 
 **Duplicate data on re-import**
-Re-sending the same export would append duplicate rows and skew averages. Fixed by adding a `UNIQUE (date, metric, unit)` constraint to the schema and using `INSERT OR IGNORE` so re-imports are safe and idempotent.
+Re-sending the same export appended duplicate rows and skewed averages. Fixed with a `UNIQUE (date, metric, unit)` constraint and `INSERT OR IGNORE` so re-imports are idempotent.
 
-## What's Next
-
-- Resting heart rate trend visualization
-- Anomaly detection on biometric data
-- Claude-powered natural language food logging synced to the pipeline
+**S3 IAM permission behavior**
+Without `s3:ListBucket` on the bucket, S3 returns 403 Forbidden instead of 404 Not Found when an object doesn't exist — a deliberate behavior to prevent bucket enumeration. Added ListBucket to the IAM policy to get the expected 404 on first run against an empty bucket.
